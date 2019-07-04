@@ -48,8 +48,12 @@ public final class PrologAllSolutions implements PrologSolutions {
   private Map<String, Term>[] getSolutions() throws Exception {
 	  // Compute solutions
 	  if(solutions == null) {
+          System.out.println("NEED TO CALCULATE ALL THE SOLUTIONS. " + this.query.getQueryString());
 		  solutions = query.allSolutions();
+          System.out.println("DONE NEED TO CALCULATE ALL THE SOLUTIONS. " + this.query.getQueryString());
+          System.out.println("GET SOLUTIONS CLOSING ...."  + this.query.getQueryString());
 		  query.close();
+          System.out.println("DONE GET SOLUTIONS CLOSING"  + this.query.getQueryString());
 		  query = null;
 	  }
 	  return solutions;
@@ -57,6 +61,10 @@ public final class PrologAllSolutions implements PrologSolutions {
   
   @Override
   public void close() throws Exception {
+    if (query != null){
+      System.out.println("Query CLOSED");
+      query.close();
+    }
     // This method doesn't need to do anything here. We already closed the query. 
   }  
   
@@ -74,6 +82,7 @@ public final class PrologAllSolutions implements PrologSolutions {
 
   @Override
   public boolean hasMoreSolutions() throws Exception {
+    System.out.println("HAS MORE SOLUTIONS");
     return currentIndex < getSolutions().length;
   }
 }

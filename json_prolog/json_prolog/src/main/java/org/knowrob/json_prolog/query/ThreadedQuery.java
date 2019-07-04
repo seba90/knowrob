@@ -29,6 +29,9 @@
 
 package org.knowrob.json_prolog.query;
 
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
 import java.util.Map;
 import java.util.LinkedList;
 
@@ -40,23 +43,27 @@ import org.jpl7.Term;
  * processed exclusively by one thread.
  * Incremental queries require the ThreadedQuery in order to make
  * sure that the query is processed in one thread only.
- * 
+ *
  * @author Daniel Beßler
  */
 public class ThreadedQuery implements Runnable {
 
+	public String getQueryString() {
+		return queryString;
+	}
+
 	private String queryString = null;
 
 	private org.jpl7.Term queryTerm = null;
-	
+
 	private org.jpl7.Query query = null;
-	
+
 	private boolean isStarted = false;
-	
+
 	private boolean isRunning = true;
-	
+
 	private boolean isClosed = true;
-	
+
 	private LinkedList<QueryCommand> commadQueue = new LinkedList<QueryCommand>();
 
 	private QueryCommand currentCommand = null;
@@ -66,7 +73,7 @@ public class ThreadedQuery implements Runnable {
 	public ThreadedQuery(String queryString) {
 		this.queryString = queryString;
 	}
-	
+
 	public ThreadedQuery(org.jpl7.Term term) {
 		this.queryTerm = term;
 	}
@@ -74,12 +81,24 @@ public class ThreadedQuery implements Runnable {
 	public Object getQueryObject() {
 		return queryString!=null ? queryString : queryTerm;
 	}
-	
+
 	public void waitOnThread() {
 		  while(!isStarted()) {
 				synchronized (getQueryObject()) {
-					try { getQueryObject().wait(); }
-					catch (Exception e) {}
+					try {
+						//In rare cases this line creates a dead lock.
+						//Since the while loop checks if the thread is started, we can add a timeout to the wait
+						//function, to avoid a dead lock.
+						getQueryObject().wait(300000);
+						//getQueryObject().wait();
+						if(!isStarted){
+							this.exception = new Exception("DEAD LOCK APPEARED " + queryString);
+							isStarted = true;
+						}
+					}
+					catch (Exception e) {
+
+					}
 				}
 		  }
 	}
@@ -88,7 +107,7 @@ public class ThreadedQuery implements Runnable {
 	public void run() {
 		isStarted = true;
 		isClosed = false;
-		
+
 		// Create a query (bound to this thread)
 		try {
 			if(queryString!=null) {
@@ -126,7 +145,11 @@ public class ThreadedQuery implements Runnable {
 				if(commadQueue.isEmpty()) {
 					// Wait for command to be pushed onto the command queue
 					synchronized (this) {
-						try { this.wait(); }
+						try {
+							System.out.println("WAITING DUE TO EMPTY QUEUE ...");
+							this.wait();
+							System.out.println("DONE WAITING DUE TO EMPTY QUEUE");
+						}
 						catch (Exception e) {}
 					}
 				}
@@ -137,13 +160,18 @@ public class ThreadedQuery implements Runnable {
 					}
 					currentCommand = cmd;
 					// process the command
+					System.out.println("EXECUTING COMMAND ..." + queryString);
 					cmd.result = cmd.execute(query);
+					System.out.println("DONE EXECUTING COMMAND" + queryString);
 					currentCommand = null;
 					// ensure cmd.result is not null
 					if(cmd.result == null) {
 						cmd.result = new QueryYieldsNullException(query);
+						System.out.println("RESULT IS NULL");
 					}
-					synchronized(cmd) { cmd.notifyAll(); }
+					synchronized(cmd) {
+						cmd.notifyAll();
+					}
 				}
 			}
 		}
@@ -151,11 +179,15 @@ public class ThreadedQuery implements Runnable {
 			// Notify caller that command finished
 			for(QueryCommand x : commadQueue) {
 				x.result = exc;
-				synchronized(x) { x.notifyAll(); }
+				synchronized(x) {
+					x.notifyAll();
+				}
 			}
 			if(cmd != null) {
 				cmd.result = exc;
-				synchronized(cmd) { cmd.notifyAll(); }
+				synchronized(cmd) {
+					cmd.notifyAll();
+				}
 			}
 		}
 
@@ -174,40 +206,75 @@ public class ThreadedQuery implements Runnable {
 				synchronized(cmd) { cmd.notifyAll(); }
 			}
 			// FIXME: what happens if thread is stuck with a command that does not terminate?
+
 			if(currentCommand!=null) {
+				System.out.println("ABORTED THREAD BEFORE FINISHING");
 				currentCommand.result = new QueryClosedException(query);
 				synchronized(currentCommand) { currentCommand.notifyAll(); }
 				currentCommand = null;
+				System.out.println("DONE ABORTED THREAD BEFORE FINISHING");
 			}
 			// wake up query thread so that it can terminate after close was called
-			synchronized (this) { this.notifyAll(); }
+			synchronized (this) {
+				this.notifyAll();
+			}
 		}
 	}
 
 	private Object runCommand(QueryCommand cmd) throws Exception {
+		System.out.println("WAIT FOR THE THREAD ... " +queryString);
 		waitOnThread();
+		System.out.println("DONE WAITING FOR THE THREAD " +queryString);
+
 		if(exception!= null) {
 			throw exception;
 		}
+
 		if(isClosed || !isRunning) {
 		  throw new InterruptedException("Thread not running for query.");
 		}
-		
+
 		cmd.result = null;
 		// add command to queue which is processed in query thread
-		synchronized (commadQueue) { commadQueue.push(cmd); }
+		System.out.println("PREPARE TO PUSH COMMAD QUEUE ... " +queryString);
+
+		synchronized (commadQueue) {
+			commadQueue.push(cmd);
+		}
+
+		System.out.println("DONE PREPARE TO PUSH COMMAD QUEUE " +queryString);
 		// wake up query thread in case it is sleeping
-		synchronized (this) { this.notifyAll(); }
+		System.out.println("NOTIFY AAAAALLL " +queryString);
+
+		synchronized (this) {
+			this.notifyAll();
+		}
+
+		System.out.println("DONE NOTIFY AAAAALLL " + queryString);
 		// wait until query thread processed the command
 		if(cmd.result==null) {
 			synchronized(cmd) {
-				try { cmd.wait(); }
+				try {
+					System.out.println("PROCESSING COMMAND WAITING ...... " + queryString);
+					cmd.wait(300000);
+					//cmd.wait();
+					if (cmd.result == null){
+						cmd.result = new Exception("DEAD LOCK APPEARED " + queryString);
+					}
+					System.out.println("DONE PROCESSING COMMAND WAITING " + queryString);
+				}
 				catch (Exception e) {}
 			}
+			System.out.println("DONE PROCESSING COMMAND ...... " +queryString);
 		}
+		//cmd.result = new Exception("DEAD LOCK APPEARED");
 		// handle query result. in case it's an exception, throw it!
-		if(cmd.result instanceof Exception)
-		  throw (Exception)cmd.result;
+		if(cmd.result instanceof Exception){
+			System.out.println("BAD EXECEPTION "+ cmd.toString());
+			throw (Exception)cmd.result;
+		}
+
+		System.out.println("DONE WITH COMMAND EXECUTION " +cmd);
 		return cmd.result;
 	}
 	
@@ -234,6 +301,7 @@ public class ThreadedQuery implements Runnable {
 
 	@SuppressWarnings("unchecked")
 	public Map<String, Term>[] allSolutions() throws Exception {
+		System.out.println("UNCHECK ALL SOLUTIONS AREA");
 		return (Map<String, Term>[])runCommand(new AllSolutionsCommand());
 	}
 }

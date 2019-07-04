@@ -31,8 +31,7 @@ package org.knowrob.json_prolog;
 
 import java.util.*;
 import java.util.Map.Entry;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 import java.io.*;
 
 import json_prolog_msgs.PrologQueryResponse;
@@ -60,8 +59,11 @@ import org.jpl7.JPL;
  * @author Daniel Beßler
  */
 public class JSONPrologNode extends AbstractNodeMain {
-	
+	final BlockingQueue<Runnable> queue = new ArrayBlockingQueue<>(100);
 	private ExecutorService queryThreadPool = Executors.newFixedThreadPool(10);
+	//private ExecutorService queryThreadPool = new ThreadPoolExecutor(6, 6,
+	//		0L, TimeUnit.MILLISECONDS,
+	//		queue);
 
 	private Map<String, PrologSolutions> queries;
 	
@@ -199,6 +201,7 @@ public class JSONPrologNode extends AbstractNodeMain {
 					}
 					else {
 						String userQuery = request.getQuery();
+						System.out.println("JSON PROLOG: GOT SIMPLE QUERY" + userQuery);
 						if(userQuery.endsWith(".")) userQuery = userQuery.substring(0, userQuery.length() - 1);
 						
 						ThreadedQuery currentQuery = new ThreadedQuery(
@@ -206,6 +209,7 @@ public class JSONPrologNode extends AbstractNodeMain {
 						String currentQueryId = request.getId();
 						// Add the query to the thread pool
 						queryThreadPool.submit(currentQuery);
+						System.out.println("QUEUE SIZE: " + queue.size());
 						
 						if(request.getMode() == json_prolog_msgs.PrologQueryRequest.INCREMENTAL) {
 							queries.put(currentQueryId, new PrologIncrementalSolutions(currentQuery));
@@ -214,6 +218,8 @@ public class JSONPrologNode extends AbstractNodeMain {
 							queries.put(currentQueryId, new PrologAllSolutions(currentQuery));
 						}
 						response.setOk(true);
+
+						System.out.println("DONE JSON PROLOG: GOT SIMPLE QUERY" + userQuery);
 					}
 				}
 			}
@@ -239,25 +245,44 @@ public class JSONPrologNode extends AbstractNodeMain {
 		@Override
 		public void build(json_prolog_msgs.PrologNextSolutionRequest request, json_prolog_msgs.PrologNextSolutionResponse response) {
 			try {
-                                synchronized(org.jpl7.Query.class) {
-				PrologSolutions currentQuery = queries.get(request.getId());
+				synchronized(org.jpl7.Query.class) {
+					PrologSolutions currentQuery = queries.get(request.getId());
+
 					if (currentQuery == null) {
+						System.out.println("JSON PROLOG: NULL NEXT-SOLUTION DONE" + currentQuery);
 						response.setStatus(json_prolog_msgs.PrologNextSolutionResponse.WRONG_ID);
 					}
+
 					else {
+						System.out.println("JSON PROLOG: NEXT-SOLUTION" + currentQuery);
 						if (!currentQuery.hasMoreSolutions()){
+							System.out.println("JSON PROLOG: NEXT-SOLUTION has some more solutions" + currentQuery);
 							if(isQueryThreadValid(currentQuery)) {
+								System.out.println("JSON PROLOG: NEXT-SOLUTION query is valid 1111" + currentQuery);
 								response.setStatus(json_prolog_msgs.PrologNextSolutionResponse.NO_SOLUTION);
 								removeQuery(request.getId());
+								System.out.println("JSON PROLOG: DONE NEXT-SOLUTION query is valid 1111" + currentQuery);
 							}
+							else{
+								System.out.println("Query Thread is not valid 1111");
+							}
+
 						}
 						else if(isQueryThreadValid(currentQuery)) {
+							System.out.println("JSON PROLOG: NEXT-SOLUTION query is valid 2222" + currentQuery);
 							java.util.Map solution = currentQuery.nextSolution();
 							if(isQueryThreadValid(currentQuery)) {
 								response.setSolution(JSONQuery.encodeResult(solution).toString());
+								System.out.println("JSON PROLOG: NEXT-SOLUTION query is valid 3333" + currentQuery);
 								response.setStatus(json_prolog_msgs.PrologNextSolutionResponse.OK);
+								System.out.println("JSON PROLOG: NEXT-SOLUTION query is valid 2222" + currentQuery);
 							}
+							else{
+								System.out.println("Query Thread is not valid 2222");
+							}
+
 						}
+						System.out.println("DONE JSON PROLOG: NEXT-SOLUTION" + currentQuery);
 					}
 				}
 
@@ -267,10 +292,13 @@ public class JSONPrologNode extends AbstractNodeMain {
 				//               at the moment. The message is usually not enough to locate the error
 				//               in the code. Include the stacktrace in order to make it easier
 				//               to find failing code!
+
+				System.out.println("DONE JSON PROLOG: NEXT-SOLUTION WITH ERRRRRRROR");
+				e.printStackTrace();
 				response.setSolution(e.getMessage());
 				response.setStatus(json_prolog_msgs.PrologNextSolutionResponse.QUERY_FAILED);
+				//response.setStatus(json_prolog_msgs.PrologNextSolutionResponse.OK);
 				removeQuery(request.getId());
-				new Exception(e).printStackTrace();
 			}
 		}
 	}
@@ -297,6 +325,7 @@ public class JSONPrologNode extends AbstractNodeMain {
 		@Override
 		public void build(json_prolog_msgs.PrologFinishRequest request, json_prolog_msgs.PrologFinishResponse response) {
 			// finish all queries
+			System.out.println("JSON PROLOG: FINISH Callback" + request);
 			if (request.getId().equals("*")){
 				Enumeration<String> e = java.util.Collections.enumeration(queries.keySet());
 				while(e.hasMoreElements())
@@ -304,6 +333,7 @@ public class JSONPrologNode extends AbstractNodeMain {
 			} else {
 				removeQuery(request.getId());
 			}
+			System.out.println("DONE JSON PROLOG: FINISH Callback" + request);
 		}
 	}
 
